@@ -60,13 +60,23 @@ async def test_independent_agents_run_in_parallel_and_dependencies_are_passed():
 @pytest.mark.asyncio
 async def test_failed_dependency_blocks_downstream_agent():
     registry = AdapterRegistry()
-    registry.register(FakeModel())
+    class FailingModel(FakeModel):
+        async def invoke(self, operation, payload, *, timeout_seconds):
+            if payload["task"]["id"] == "needs-web":
+                raise RuntimeError("provider unavailable")
+            return await super().invoke(operation, payload,
+                                        timeout_seconds=timeout_seconds)
+
+    registry.register(FailingModel())
     orchestrator = AgentOrchestrator(ModelIntelligenceRouter(registry))
     report = await orchestrator.execute([
         make_task("needs-web", ()),
         make_task("dependent", ("needs-web",)),
     ])
-    assert report.outputs["dependent"]["dependencies"] == {}
+    results = {item.task_id: item.result for item in report.executions}
+    assert not results["needs-web"].success
+    assert not results["dependent"].success
+    assert "Blocked by unsuccessful dependencies" in results["dependent"].error
 
 
 def test_side_effecting_tool_tasks_are_rejected():

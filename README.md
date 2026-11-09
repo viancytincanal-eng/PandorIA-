@@ -23,6 +23,12 @@ Request -> CognitiveKernel
   -> Response + execution trace
 ```
 
+## Layered reasoning engine
+
+The `pandoria.reasoning` package builds an auditable plan before model execution. It normalizes requests, classifies coarse intent, estimates complexity, extracts explicit constraints, decomposes multi-step work into dependency-linked subtasks, and selects an execution strategy. The kernel includes this plan in the model adapter payload and records its key decisions in the execution trace.
+
+These initial stages are deterministic routing aids, not a substitute for semantic reasoning. A configured model adapter is still required for actual language understanding and generation. See [Reasoning Architecture](docs/REASONING_ARCHITECTURE.md).
+
 ## Quick start
 Requires Python 3.11+.
 ```bash

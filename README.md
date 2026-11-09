@@ -5,7 +5,8 @@ PandorIA is a modular cognitive runtime designed to coordinate models, tools, me
 ## Design principles
 - **Model-agnostic core:** providers are adapters, never the brain itself.
 - **Layered cognition:** intake, planning, capability routing, execution, verification and reflection are separate stages.
-- **Bounded concurrency:** independent tasks can run in parallel under explicit limits and deadlines.
+- **Specialist orchestration:** independent subtasks run concurrently; dependent tasks wait for upstream results.
+- **Bounded concurrency:** independent tasks run in parallel under explicit limits and deadlines.
 - **Fail-closed integrations:** tools declare capabilities and policies; unavailable or unauthorized tools are not invoked.
 - **Memory by interface:** short-term, episodic and semantic stores can be implemented independently.
 - **Observable decisions:** each run returns a trace with stages, timings, errors and verification status.
@@ -15,31 +16,28 @@ PandorIA is a modular cognitive runtime designed to coordinate models, tools, me
 Request -> CognitiveKernel
   -> Intake / Context retrieval
   -> Policy & risk gate
-  -> Dependency planner
-  -> Capability router
-  -> Bounded async scheduler
-  -> Model / tool / memory adapters
-  -> Evidence-aware verifier
+  -> Layered reasoning plan
+  -> Dependency graph / specialist orchestration
+  -> Capability-aware model router
+  -> Bounded parallel execution / failover
+  -> Model, tool and memory adapters
+  -> Verification
   -> Response + execution trace
 ```
 
 ## Layered reasoning engine
 
-The `pandoria.reasoning` package builds an auditable plan before model execution. It normalizes requests, classifies coarse intent, estimates complexity, extracts explicit constraints, decomposes multi-step work into dependency-linked subtasks, and selects an execution strategy. The kernel includes this plan in the model adapter payload and records its key decisions in the execution trace.
+The `pandoria.reasoning` package normalizes requests, classifies coarse intent, estimates complexity, extracts explicit constraints, decomposes multi-step work into dependency-linked subtasks and selects an execution strategy. See [Reasoning Architecture](docs/REASONING_ARCHITECTURE.md).
 
-These initial stages are deterministic routing aids, not a substitute for semantic reasoning. A configured model adapter is still required for actual language understanding and generation. See [Reasoning Architecture](docs/REASONING_ARCHITECTURE.md).
+These deterministic stages organize work; they are not a substitute for semantic reasoning.
+
+## Model intelligence router
+
+The `pandoria.model_intelligence` package ranks capability-compatible providers using routing profiles and observed performance. It provides per-provider concurrency limits, failover, circuit breakers and health metrics. See [Model Intelligence Router](docs/MODEL_INTELLIGENCE_ROUTER.md).
 
 ## Multi-agent orchestration
 
-The `pandoria.orchestration` layer executes specialist model tasks as a
-dependency graph. Independent agents run concurrently under a global limit;
-dependent agents receive only the outputs they declared as dependencies.
-The kernel then performs a separate synthesis pass and records agent/provider
-attempts in its execution trace. Research subtasks require an adapter that
-declares `web.search`; missing specialist capabilities are reported rather
-than silently simulated. Side-effecting tool tasks are intentionally excluded
-from this executor until a separately governed tool runtime is implemented.
-See [Multi-Agent Orchestration](docs/MULTI_AGENT_ORCHESTRATION.md).
+The `pandoria.orchestration` package turns reasoning subtasks into role-specialized model calls. Independent branches execute concurrently, dependency outputs flow into later stages, and failed branches prevent dependent work from running. The initial specialist roles are prompt profiles, not separate trained agents unless different providers are configured. See [Multi-Agent Orchestration](docs/MULTI_AGENT_ORCHESTRATION.md).
 
 ## Quick start
 Requires Python 3.11+.
@@ -50,7 +48,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The first release establishes deterministic engine contracts. It does not pretend to reason intelligently without a configured model adapter. Connect providers through `pandoria/integrations/`.
+The runtime requires at least one registered adapter with `text.generate` for model execution. Tasks that require additional capabilities, such as `web.search`, run only when an adapter declares those capabilities.
 
 ## Safety and performance
 - Configure per-provider and global concurrency limits.
@@ -59,11 +57,13 @@ The first release establishes deterministic engine contracts. It does not preten
 - Treat tool output and retrieved documents as untrusted data.
 - Require explicit policy approval for side-effecting tools.
 - Store only data covered by the configured memory policy.
+- Do not treat structural verification as proof of factual correctness.
 
 ## Roadmap
 1. Core cognitive runtime and test suite.
-2. Model adapter registry and provider health/fallback.
-3. Persistent memory with Postgres and vector retrieval.
-4. Tool permissioning, integration packs and MCP bridge.
-5. Evaluation harness, telemetry and adaptive routing.
-6. API and user-facing interface.
+2. Model adapter registry, intelligent routing and provider resilience.
+3. Multi-agent orchestration and evaluation.
+4. Persistent memory with Postgres and vector retrieval.
+5. Tool permissioning, integration packs and MCP bridge.
+6. Evaluation harness, telemetry and adaptive routing.
+7. API and user-facing interface.

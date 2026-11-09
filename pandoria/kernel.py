@@ -7,15 +7,18 @@ from pandoria.integrations.base import AdapterRegistry
 from pandoria.memory import MemoryStore, NullMemory
 from pandoria.planner import DependencyPlanner
 from pandoria.policy import PolicyEngine
+from pandoria.reasoning import ReasoningEngine
 from pandoria.scheduler import BoundedScheduler
 from pandoria.verifier import ResponseVerifier
 
+
 class CognitiveKernel:
-    """Coordinates planning, memory, integrations, execution and verification."""
+    """Coordinates layered reasoning, planning, memory, integrations and verification."""
     def __init__(self, *, registry: AdapterRegistry | None = None,
                  memory: MemoryStore | None = None, max_concurrency: int = 8) -> None:
         self.registry = registry or AdapterRegistry()
         self.memory = memory or NullMemory()
+        self.reasoning = ReasoningEngine()
         self.planner = DependencyPlanner()
         self.policy = PolicyEngine()
         self.scheduler = BoundedScheduler(max_concurrency=max_concurrency)
@@ -26,11 +29,18 @@ class CognitiveKernel:
         started = time.perf_counter()
         memories = await self.memory.recall(request.text, user_id=request.user_id,
                                             session_id=request.session_id)
-        trace.record("intake", chars=len(request.text), memories=len(memories))
-        task = TaskSpec(task_id="respond", description="Respond to the user request.",
+        reasoning_plan = self.reasoning.plan(
+            request.text, context_items=[record.content for record in memories])
+        trace.record("reasoning", intent=reasoning_plan.context.intent,
+                     complexity=reasoning_plan.context.complexity,
+                     strategy=reasoning_plan.strategy,
+                     subtasks=len(reasoning_plan.subtasks),
+                     constraints=list(reasoning_plan.context.constraints))
+        task = TaskSpec(task_id="respond", description="Respond using the reasoning plan.",
             kind=TaskKind.MODEL, required_capabilities=frozenset({"text.generate"}),
             risk=RiskLevel.LOW, timeout_seconds=60,
             input_data={"prompt": request.text,
+                        "reasoning_plan": reasoning_plan.as_prompt_context(),
                         "memories": [record.content for record in memories]})
         waves = self.planner.order([task])
         trace.record("planning", tasks=sum(map(len, waves)), waves=len(waves))
@@ -43,8 +53,9 @@ class CognitiveKernel:
                 status="blocked")
         candidates = self.registry.candidates(task.required_capabilities)
         if not candidates:
-            message = ("PandorIA's cognitive core is initialized, but no language-model adapter "
-                "providing 'text.generate' is configured yet. Connect a model adapter to enable generation.")
+            message = ("PandorIA's cognitive core and layered reasoning planner are initialized, "
+                "but no language-model adapter providing 'text.generate' is configured yet. "
+                "Connect a model adapter to enable semantic reasoning and generation.")
             trace.record("routing", candidates=0, selected=None)
             verification = self.verifier.verify(message, task_errors=[])
             trace.record("verification", passed=verification.passed,

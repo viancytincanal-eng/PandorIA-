@@ -33,6 +33,9 @@ class _Circuit:
     failures: int = 0
     opened_until: float = 0.0
     successes: int = 0
+    total_attempts: int = 0
+    failed_attempts: int = 0
+    latency_ewma_ms: float | None = None
 
 @dataclass(slots=True)
 class _ProviderRuntime:
@@ -64,7 +67,7 @@ class ModelIntelligenceRouter:
             runtime = self._runtime_for(adapter)
             if runtime.circuit.opened_until > now:
                 continue
-            score = self._score(self._profile(adapter), task)
+            score = self._score(self._profile(adapter), task, runtime.circuit)
             if task.preferred_provider == adapter.name:
                 score += 0.12
             ranked.append((score, adapter.name, adapter))
@@ -86,6 +89,7 @@ class ModelIntelligenceRouter:
                                        timeout_seconds=task.timeout_seconds),
                         timeout=task.timeout_seconds)
                 elapsed = (time.perf_counter() - attempt_started) * 1000
+                self._record_observation(runtime.circuit, elapsed, True)
                 runtime.circuit.failures = 0
                 runtime.circuit.successes += 1
                 attempts.append(ProviderAttempt(adapter.name, True, elapsed))
@@ -94,6 +98,7 @@ class ModelIntelligenceRouter:
                     tuple(attempts), len(ranked))
             except Exception as exc:
                 elapsed = (time.perf_counter() - attempt_started) * 1000
+                self._record_observation(runtime.circuit, elapsed, False)
                 runtime.circuit.failures += 1
                 if runtime.circuit.failures >= self.circuit_failure_threshold:
                     runtime.circuit.opened_until = time.monotonic() + self.circuit_reset_seconds
@@ -104,13 +109,20 @@ class ModelIntelligenceRouter:
     def health(self) -> dict[str, dict[str, Any]]:
         now = time.monotonic()
         result = {}
-        for name, adapter in self.registry._adapters.items():
+        for name, available in self.registry.health().items():
+            adapter = self.registry.get(name)
+            if adapter is None:
+                continue
             runtime = self._runtime_for(adapter)
+            circuit = runtime.circuit
             result[name] = {
-                "available": bool(adapter.healthy),
+                "available": available,
                 "circuit": "open" if runtime.circuit.opened_until > now else "closed",
                 "consecutive_failures": runtime.circuit.failures,
-                "successes": runtime.circuit.successes,
+                "successes": circuit.successes,
+                "observed_reliability": (circuit.successes / circuit.total_attempts
+                                         if circuit.total_attempts else None),
+                "observed_latency_ms": circuit.latency_ewma_ms,
             }
         return result
 
@@ -130,13 +142,30 @@ class ModelIntelligenceRouter:
         return profile if isinstance(profile, Mapping) else {}
 
     @staticmethod
-    def _score(profile: Mapping[str, Any], task: TaskSpec) -> float:
+    def _record_observation(circuit: _Circuit, elapsed_ms: float, success: bool) -> None:
+        circuit.total_attempts += 1
+        if not success:
+            circuit.failed_attempts += 1
+        previous = circuit.latency_ewma_ms
+        circuit.latency_ewma_ms = elapsed_ms if previous is None else (
+            0.25 * elapsed_ms + 0.75 * previous
+        )
+
+    @staticmethod
+    def _score(profile: Mapping[str, Any], task: TaskSpec,
+               circuit: _Circuit | None = None) -> float:
         quality = float(profile.get("quality", 0.5))
         reliability = float(profile.get("reliability", 0.9))
-        latency = max(1.0, float(profile.get("latency_ms", 1000.0)))
+        latency = max(1.0, float(
+            circuit.latency_ewma_ms if circuit and circuit.latency_ewma_ms is not None
+            else profile.get("latency_ms", 1000.0)
+        ))
         cost = float(profile.get("cost", 0.5))
         if not 0 <= quality <= 1 or not 0 <= reliability <= 1 or not 0 <= cost <= 1:
             raise ValueError("quality, reliability and cost must be between 0 and 1")
+        if circuit and circuit.total_attempts >= 3:
+            observed = circuit.successes / circuit.total_attempts
+            reliability = 0.3 * reliability + 0.7 * observed
         speed = 1.0 / (1.0 + latency / 5000.0)
         if task.kind.value in {"reason", "verify"}:
             weights = (0.48, 0.30, 0.12, 0.10)

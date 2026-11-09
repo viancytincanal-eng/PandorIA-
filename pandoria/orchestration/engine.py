@@ -115,7 +115,7 @@ class AgentOrchestrator:
                 },
                 "dependency_outputs": dependency_outputs,
             }
-            operation = self._OPERATIONS[task.kind]
+            operation = self._operation_for(task)
             attempts: tuple[dict[str, Any], ...] = ()
             async with self._semaphore:
                 try:
@@ -163,3 +163,11 @@ class AgentOrchestrator:
             waves=len(waves),
             elapsed_ms=(time.perf_counter() - started) * 1000,
         )
+
+    @classmethod
+    def _operation_for(cls, task: TaskSpec) -> str:
+        if "web.search" in task.required_capabilities:
+            return "search"
+        if "web.fetch" in task.required_capabilities:
+            return "fetch"
+        return cls._OPERATIONS[task.kind]

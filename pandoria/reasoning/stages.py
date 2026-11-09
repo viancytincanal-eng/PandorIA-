@@ -1,12 +1,11 @@
 """Small deterministic stages. They organize work; they do not claim model-level reasoning."""
 from __future__ import annotations
 import re
-from collections.abc import Callable
-from pandoria.reasoning.contracts import ReasoningContext, ReasoningPlan, Subtask
+from pandoria.reasoning.contracts import ReasoningContext, Subtask
 
 
 def normalize(text: str) -> str:
-    return re.sub(r"\\s+", " ", text).strip()
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def classify_intent(text: str) -> str:
@@ -27,7 +26,7 @@ def classify_intent(text: str) -> str:
 def estimate_complexity(text: str) -> str:
     words = len(text.split())
     conjunctions = sum(text.casefold().count(term) for term in
-                       (" y ", " además ", " también ", " then ", " and "))
+                       (" y ", " además ", " también ", " después ", " then ", " and "))
     if words > 100 or conjunctions >= 4:
         return "high"
     if words > 35 or conjunctions >= 2:
@@ -37,9 +36,9 @@ def estimate_complexity(text: str) -> str:
 
 def extract_constraints(text: str) -> tuple[str, ...]:
     patterns = (
-        r"\\b(?:sin|no|evita|excepto)\\b[^.!?;]*",
-        r"\\b(?:antes de|después de|máximo|mínimo|presupuesto)\\b[^.!?;]*",
-        r"\\b\\d+\\s*(?:segundos|minutos|horas|días|weeks|days)\\b",
+        r"\b(?:sin|no|evita|excepto)\b[^.!?;]*",
+        r"\b(?:antes de|después de|máximo|mínimo|presupuesto)\b[^.!?;]*",
+        r"\b\d+\s*(?:segundos|minutos|horas|días|weeks|days)\b",
     )
     found: list[str] = []
     for pattern in patterns:
@@ -48,7 +47,7 @@ def extract_constraints(text: str) -> tuple[str, ...]:
 
 
 def decompose(context: ReasoningContext) -> tuple[Subtask, ...]:
-    if context.complexity == "low":
+    if context.complexity == "low" and context.intent not in {"build", "research"}:
         return (Subtask("solve", context.normalized_request, "solve"),)
     if context.intent == "research":
         return (
@@ -68,6 +67,3 @@ def decompose(context: ReasoningContext) -> tuple[Subtask, ...]:
         Subtask("solve", "Develop a solution that satisfies the identified constraints.", "solve", ("analyze",)),
         Subtask("review", "Check consistency, omissions, and unsupported claims.", "verification", ("solve",)),
     )
-
-
-Stage = Callable[[str], object]

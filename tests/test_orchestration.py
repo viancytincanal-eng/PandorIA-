@@ -71,10 +71,12 @@ async def test_failed_dependency_blocks_downstream_agent():
     orchestrator = AgentOrchestrator(ModelIntelligenceRouter(registry))
     report = await orchestrator.execute([
         make_task("needs-web", ()),
+        make_task("independent", ()),
         make_task("dependent", ("needs-web",)),
     ])
     results = {item.task_id: item.result for item in report.executions}
     assert not results["needs-web"].success
+    assert results["independent"].success
     assert not results["dependent"].success
     assert "Blocked by unsuccessful dependencies" in results["dependent"].error
 

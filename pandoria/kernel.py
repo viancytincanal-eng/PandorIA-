@@ -5,15 +5,15 @@ from pandoria.contracts import (CognitiveRequest, CognitiveResponse, ExecutionTr
     RiskLevel, TaskKind, TaskResult, TaskSpec)
 from pandoria.integrations.base import AdapterRegistry
 from pandoria.memory import MemoryStore, NullMemory
+from pandoria.model_intelligence import ModelIntelligenceRouter, RoutingError
 from pandoria.planner import DependencyPlanner
 from pandoria.policy import PolicyEngine
 from pandoria.reasoning import ReasoningEngine
 from pandoria.scheduler import BoundedScheduler
 from pandoria.verifier import ResponseVerifier
 
-
 class CognitiveKernel:
-    """Coordinates layered reasoning, planning, memory, integrations and verification."""
+    """Coordinates layered reasoning, model routing, memory, tools and verification."""
     def __init__(self, *, registry: AdapterRegistry | None = None,
                  memory: MemoryStore | None = None, max_concurrency: int = 8) -> None:
         self.registry = registry or AdapterRegistry()
@@ -22,6 +22,7 @@ class CognitiveKernel:
         self.planner = DependencyPlanner()
         self.policy = PolicyEngine()
         self.scheduler = BoundedScheduler(max_concurrency=max_concurrency)
+        self.router = ModelIntelligenceRouter(self.registry)
         self.verifier = ResponseVerifier()
 
     async def process(self, request: CognitiveRequest) -> CognitiveResponse:
@@ -51,11 +52,11 @@ class CognitiveKernel:
             return CognitiveResponse(request.request_id,
                 "I can't execute this request under the current policy.", verification, trace,
                 status="blocked")
-        candidates = self.registry.candidates(task.required_capabilities)
+        candidates = self.router.rank(task)
         if not candidates:
             message = ("PandorIA's cognitive core and layered reasoning planner are initialized, "
-                "but no language-model adapter providing 'text.generate' is configured yet. "
-                "Connect a model adapter to enable semantic reasoning and generation.")
+                "but no available language-model adapter provides 'text.generate'. "
+                "Register a compatible provider to enable semantic reasoning and generation.")
             trace.record("routing", candidates=0, selected=None)
             verification = self.verifier.verify(message, task_errors=[])
             trace.record("verification", passed=verification.passed,
@@ -63,22 +64,34 @@ class CognitiveKernel:
             trace.record("complete", elapsed_ms=(time.perf_counter() - started) * 1000)
             return CognitiveResponse(request.request_id, message, verification, trace,
                                      status="awaiting_provider")
-        adapter = candidates[0]
-        trace.record("routing", candidates=len(candidates), selected=adapter.name)
+
         async def invoke() -> Any:
-            return await adapter.invoke("generate", dict(task.input_data),
-                                        timeout_seconds=task.timeout_seconds)
+            outcome = await self.router.invoke(task, "generate", dict(task.input_data))
+            trace.record("routing", candidates=outcome.candidates_considered,
+                         selected=outcome.provider,
+                         attempts=[{"provider": a.provider, "success": a.success,
+                                    "elapsed_ms": a.elapsed_ms, "error": a.error}
+                                   for a in outcome.attempts])
+            return outcome
         try:
-            output, elapsed = await self.scheduler.run(invoke, task.timeout_seconds)
-            result = TaskResult(task.task_id, True, output=output,
-                                provider=adapter.name, elapsed_ms=elapsed)
+            outcome, elapsed = await self.scheduler.run(
+                invoke, task.timeout_seconds * max(1, len(candidates)))
+            result = TaskResult(task.task_id, True, output=outcome.output,
+                provider=outcome.provider, elapsed_ms=elapsed, attempts=len(outcome.attempts))
+        except RoutingError as exc:
+            trace.record("routing", candidates=len(candidates), selected=None,
+                         attempts=[{"provider": a.provider, "success": a.success,
+                                    "elapsed_ms": a.elapsed_ms, "error": a.error}
+                                   for a in exc.attempts])
+            result = TaskResult(task.task_id, False, error=str(exc),
+                                attempts=len(exc.attempts))
         except Exception as exc:
             result = TaskResult(task.task_id, False,
-                error=f"{type(exc).__name__}: {exc}", provider=adapter.name)
+                error=f"{type(exc).__name__}: {exc}")
         trace.task_results.append(result)
         answer = str(result.output) if result.success else (
-            "The selected model adapter failed. The failure was contained and recorded.")
-        errors = [] if result.success else [result.error or "Unknown adapter failure."]
+            "All eligible model providers failed. The failure was contained and recorded.")
+        errors = [] if result.success else [result.error or "Unknown provider failure."]
         verification = self.verifier.verify(answer, task_errors=errors)
         trace.record("verification", passed=verification.passed,
                      confidence=verification.confidence, issues=list(verification.issues))

@@ -29,6 +29,18 @@ The `pandoria.reasoning` package builds an auditable plan before model execution
 
 These initial stages are deterministic routing aids, not a substitute for semantic reasoning. A configured model adapter is still required for actual language understanding and generation. See [Reasoning Architecture](docs/REASONING_ARCHITECTURE.md).
 
+## Multi-agent orchestration
+
+The `pandoria.orchestration` layer executes specialist model tasks as a
+dependency graph. Independent agents run concurrently under a global limit;
+dependent agents receive only the outputs they declared as dependencies.
+The kernel then performs a separate synthesis pass and records agent/provider
+attempts in its execution trace. Research subtasks require an adapter that
+declares `web.search`; missing specialist capabilities are reported rather
+than silently simulated. Side-effecting tool tasks are intentionally excluded
+from this executor until a separately governed tool runtime is implemented.
+See [Multi-Agent Orchestration](docs/MULTI_AGENT_ORCHESTRATION.md).
+
 ## Quick start
 Requires Python 3.11+.
 ```bash

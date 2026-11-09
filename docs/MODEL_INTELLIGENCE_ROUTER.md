@@ -21,3 +21,9 @@ Profile values are estimates until an evaluation harness measures them. Circuit
 state and metrics are currently process-local, not persistent. Side-effecting tool
 operations must not be blindly retried; they need idempotency keys or a separate
 retry policy before being routed through this mechanism.
+
+After three or more attempts, observed success ratio is blended into the
+reliability score. Provider latency is tracked with an exponentially weighted
+moving average and gradually replaces the initial latency estimate. The health
+snapshot exposes these process-local measurements for monitoring and later
+evaluation-harness integration.

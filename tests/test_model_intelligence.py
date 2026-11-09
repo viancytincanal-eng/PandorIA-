@@ -54,3 +54,14 @@ async def test_circuit_opens_after_threshold():
         await router.invoke(task(), "generate", {})
     assert router.health()["unstable"]["circuit"] == "open"
     assert router.rank(task()) == []
+
+@pytest.mark.asyncio
+async def test_router_exposes_observed_reliability_and_latency():
+    registry = AdapterRegistry()
+    registry.register(FakeAdapter("measured", output="ok"))
+    router = ModelIntelligenceRouter(registry)
+    for _ in range(3):
+        await router.invoke(task(), "generate", {})
+    metrics = router.health()["measured"]
+    assert metrics["observed_reliability"] == 1.0
+    assert metrics["observed_latency_ms"] is not None

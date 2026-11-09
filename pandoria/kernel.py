@@ -168,14 +168,15 @@ class CognitiveKernel:
             if item in report.outputs and report.outputs[item] is not None
         ]
         answer = "\n\n".join(terminal_outputs).strip()
+        errors = [
+            f"{item.task_id}: {item.error or 'task failed'}" for item in failed
+        ]
         if not answer:
+            errors.append("No successful terminal specialist produced an answer.")
             answer = (
                 "PandorIA could not complete the planned specialist workflow. "
                 "Inspect the execution trace for failed tasks or unavailable capabilities."
             )
-        errors = [
-            f"{item.task_id}: {item.error or 'task failed'}" for item in failed
-        ]
         verification = self.verifier.verify(answer, task_errors=errors)
         trace.record(
             "verification", passed=verification.passed,
@@ -185,5 +186,5 @@ class CognitiveKernel:
         trace.record("complete", elapsed_ms=(time.perf_counter() - started) * 1000)
         return CognitiveResponse(
             request.request_id, answer, verification, trace,
-            status="completed" if not errors else "degraded",
+            status="completed" if not errors and verification.passed else "degraded",
         )
